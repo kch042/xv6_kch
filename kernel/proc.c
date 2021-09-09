@@ -294,6 +294,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+	
+  np->mask = p->mask;  // make sure process is tracable
 
   release(&np->lock);
 
