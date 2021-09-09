@@ -44,6 +44,22 @@ procinit(void)
   kvminithart();
 }
 
+// returns the number of ps that is not in unused state
+int num_not_unused_proc() {
+	push_off();	
+	int n = 0;
+	int j = 0;
+
+	while (j < NPROC) {
+		if (proc[j].state != UNUSED)
+			n++;
+		j++;
+	}
+
+	pop_off();
+	return n;
+}
+
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.

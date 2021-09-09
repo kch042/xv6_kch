@@ -356,12 +356,12 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
-  while(len > 0){
+  while(len > 0){  // each iteration copy a page
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
-    n = PGSIZE - (dstva - va0);
+    n = PGSIZE - (dstva - va0);  // dstva - va0 = offset
     if(n > len)
       n = len;
     memmove((void *)(pa0 + (dstva - va0)), src, n);

@@ -30,8 +30,8 @@ kinit()
   freerange(end, (void*)PHYSTOP);
 }
 
-void
-freerange(void *pa_start, void *pa_end)
+void   // add all mem whose address between end and PHYSTOP to free list
+freerange(void *pa_start, void *pa_end)  // subroutine for kinit
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
@@ -79,4 +79,19 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+// returns num of free memory bytes
+// for lab2 sysinfo syscall 
+int
+numFreeMem() {
+	int k = 0;
+	struct run *p;
+
+	acquire(&kmem.lock);
+	for (p = kmem.freelist; p; p = p->next)
+		k++;
+	release(&kmem.lock);
+
+	return k*PGSIZE;
 }
