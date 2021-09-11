@@ -56,6 +56,29 @@ kvminithart()
   sfence_vma();
 }
 
+void vmp(pagetable_t pgtbl, int level) {
+	pte_t pte;
+
+	for (int i = 0; i < 512; i++) {
+		pte = pgtbl[i];
+		if (pte & PTE_V) {  // check valid bit
+			for (int j = 3-level; j > 0; j--)
+				printf("..");
+			uint64 pa = PTE2PA(pte);
+			printf("%d: pte %p pa %p\n", i, pte, pa);
+			
+			if (level > 0) 
+				vmp((pagetable_t)pa, level-1);
+		}
+	}
+}
+
+// print out valid pte and pa in pagetables
+void vmprint(pagetable_t root) {
+	printf("page table %p\n", root);
+	vmp(root, 2);
+}
+
 // Return the address of the PTE in page table pagetable
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page-table pages.
@@ -75,14 +98,14 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     panic("walk");
 
   for(int level = 2; level > 0; level--) {
-    pte_t *pte = &pagetable[PX(level, va)];
+    pte_t *pte = &pagetable[PX(level, va)];  // PX obtains page number
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
-    } else {
+    } else {  // allocate a new page table if not exist and allowed 
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
-        return 0;
+        return 0;  // !alloc means not allowed
       memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V;
+      *pte = PA2PTE(pagetable) | PTE_V;  // | PTE_V means set pte valid 
     }
   }
   return &pagetable[PX(0, va)];
