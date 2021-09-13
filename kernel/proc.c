@@ -232,6 +232,8 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  
+  kvmmapuser(p->pagetable, p->kpagetable, 0, p->sz);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -258,6 +260,9 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+	// Add entry for user mappings into kpagetable
+	// sz is now new, so oldsz = sz - n
+	kvmmapuser(p->pagetable, p->kpagetable, sz-n, sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -286,6 +291,8 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  kvmmapuser(np->pagetable, np->kpagetable, 0, np->sz);
 
   np->parent = p;
 

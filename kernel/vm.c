@@ -258,6 +258,31 @@ kvmcreate() {
 	return kpt;
 }
 
+// map user's pagetable to kpagetable
+void
+kvmmapuser(pagetable_t upt, pagetable_t kpt, uint64 oldsz, uint64 newsz) {
+	pte_t *upte, *kpte;
+	uint64 va, pa;
+	int flags;
+
+	// note that mapping of va should be page-aligned
+	for (va = PGROUNDUP(oldsz); va < newsz; va += PGSIZE) {
+		upte = walk(upt, va, 0);
+		if (upte == 0)
+			panic("kvmmapuser: upte not found");
+		kpte = walk(kpt, va, 1);
+		if (kpte == 0)
+			panic("kvmmapuser: kpte not found");
+		
+		// clear PTE_U bit to access that page
+		// in kernel mode
+		flags = PTE_FLAGS(*upte) & (~PTE_U);
+		
+		pa = PTE2PA(*upte);
+		*kpte = PA2PTE(pa) | flags;
+	}
+}
+
 // Load the user initcode into address 0 of pagetable,
 // for the very first process.
 // sz must be less than a page.
@@ -449,23 +474,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
-
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
-
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+	return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -475,38 +484,5 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
-
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
-
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
-
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+	return copyinstr_new(pagetable, dst, srcva, max);
 }
