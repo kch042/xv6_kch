@@ -230,6 +230,34 @@ uvmcreate()
   return pagetable;
 }
 
+void ukvmmap(pagetable_t kpt, uint64 va, uint64 pa, uint64 sz, int perm) {
+	if (mappages(kpt, va, sz, pa, perm) < 0)
+		panic("ukvmmap");
+}
+
+
+pagetable_t
+kvmcreate() {
+	pagetable_t kpt = (pagetable_t) kalloc();
+	if (kpt == 0)
+		return 0;
+	memset(kpt, 0, PGSIZE); // important
+
+	for (int i = 1; i < 512; i++)
+		kpt[i] = kernel_pagetable[i];
+
+	// uart registers
+    ukvmmap(kpt, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+    // virtio mmio disk interface
+    ukvmmap(kpt, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+    // PLIC
+    ukvmmap(kpt, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+	
+	return kpt;
+}
+
 // Load the user initcode into address 0 of pagetable,
 // for the very first process.
 // sz must be less than a page.
@@ -320,6 +348,25 @@ uvmfree(pagetable_t pagetable, uint64 sz)
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
+}
+
+// Free kpagetable pte
+// but don't free shared pages
+// so leaf pages shouldn't be freed as well
+// Only entry 0 is worth considering
+void
+kvmfree(pagetable_t kpt) {
+	pagetable_t L1 = (pagetable_t) PTE2PA(kpt[0]);
+	pte_t l1;
+	
+	// Draw figure to better understand
+	for (int i = 0; i < 512; i++) {
+		l1 = L1[i];
+		if (l1 & PTE_V)
+			kfree((void *) PTE2PA(l1));
+	}
+	kfree((void *) L1);
+	kfree((void *) kpt);
 }
 
 // Given a parent process's page table, copy
