@@ -114,9 +114,30 @@ printf(char *fmt, ...)
     release(&pr.lock);
 }
 
+// print the return address in each stack frame
+// it will help backtracing the function calls
+// After getting addresses, quit qemu and 
+// run "riscv64-unknown-elf-addr2line -e kernel kernel"
+// and then paste the address got by backtrace
+void
+backtrace() {
+    uint64 fp = r_fp();
+
+    // Recall each ps is allocated a stack of a PGSIZE at page-aligned address
+    uint64 end = PGROUNDUP(fp);
+    
+    printf("backtrace:\n");
+    // The stack grows "downward"
+    while (fp < end) {
+        printf("%p\n", *(uint64 *)(fp-8));
+        fp = *(uint64 *)(fp-16);
+    }
+}
+
 void
 panic(char *s)
 {
+  backtrace();
   pr.locking = 0;
   printf("panic: ");
   printf(s);
@@ -132,3 +153,5 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+

@@ -8,7 +8,10 @@ int g(int x) {
 }
 
 int f(int x) {
-  return g(x);
+  x += 1;
+  x = 2*x;
+  x -= 1;
+  return x;
 }
 
 void main(void) {

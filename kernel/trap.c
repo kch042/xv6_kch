@@ -66,7 +66,7 @@ usertrap(void)
 
     syscall();
   } else if((which_dev = devintr()) != 0){
-    // ok
+    // device interrupt, ok
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -77,8 +77,57 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2) {
+    if (!p->in_handler) {
+        p->ticks++;
+        if (p->ticks == p->siginterval) {
+            
+            // prevent incrementing ticks by timer interrupt
+            // while still in alarm handler
+            p->in_handler = 1;
+
+            // save the register states
+            p->_ra = p->trapframe->ra;
+            p->_epc = p->trapframe->epc;
+            p->_sp = p->trapframe->sp;
+            p->_gp = p->trapframe->gp;
+            p->_tp = p->trapframe->tp;
+            p->_a0 = p->trapframe->a0;
+            p->_a1 = p->trapframe->a1;
+            p->_a2 = p->trapframe->a2;
+            p->_a3 = p->trapframe->a3;
+            p->_a4 = p->trapframe->a4;
+            p->_a5 = p->trapframe->a5;
+            p->_a6 = p->trapframe->a6;
+            p->_a7 = p->trapframe->a7;
+            p->_s0 = p->trapframe->s0;
+            p->_s1 = p->trapframe->s1;
+            p->_s2 = p->trapframe->s2;
+            p->_s3 = p->trapframe->s3;
+            p->_s4 = p->trapframe->s4;
+            p->_s5 = p->trapframe->s5;
+            p->_s6 = p->trapframe->s6;
+            p->_s7 = p->trapframe->s7;
+            p->_s8 = p->trapframe->s8;
+            p->_s9 = p->trapframe->s9;
+            p->_s10 = p->trapframe->s10;
+            p->_s11 = p->trapframe->s11;
+            p->_t0 = p->trapframe->t0;
+            p->_t1 = p->trapframe->t1;       
+            p->_t2 = p->trapframe->t2;       
+            p->_t3 = p->trapframe->t3;       
+            p->_t4 = p->trapframe->t4;       
+            p->_t5 = p->trapframe->t5;       
+            p->_t6 = p->trapframe->t6;       
+            
+            p->trapframe->epc = (uint64) p->handler;
+            p->ticks = 0;
+        }
+    }
+
     yield();
+  }
+
 
   usertrapret();
 }
