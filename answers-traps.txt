@@ -1,0 +1,14 @@
+1. a1 and a2 stores the frist and second argument to functions
+
+2. Compiler optimizes out function g (by inline)
+
+3. 0x638
+
+4. 0x38
+
+5. He110 World
+
+If big endian is adopted, change i to be 0x726c6400
+No need to change 57616
+
+6. unspecified
