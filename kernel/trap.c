@@ -50,7 +50,8 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  uint64 _scause = r_scause();
+  if(_scause == 8){
     // system call
 
     if(p->killed)
@@ -65,6 +66,12 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if (_scause == 13 || _scause == 15) {
+    // page fault handler: lazy allocation
+    if (uvmlazyalloc(p->pagetable, r_stval()) < 0) {
+        p->killed = 1;
+        printf("usertrap(): lazy alloc");
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

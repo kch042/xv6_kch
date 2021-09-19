@@ -183,7 +183,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
+      // panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -249,6 +250,22 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
     }
   }
   return newsz;
+}
+
+// page fault handler
+uint64
+uvmlazyalloc(pagetable_t pgtbl, uint64 va) {
+    char *mem = kalloc();
+    if (mem == 0)
+        return 0;
+    memset(mem, 0, PGSIZE);
+
+    va = PGROUNDDOWN(va);
+    if (mappages(pgtbl, va, PGSIZE, (uint64)mem, PTE_R | PTE_W | PTE_U | PTE_X) < 0) {
+        kfree(mem);
+        return 0;
+    }
+    return (uint64)mem;
 }
 
 // Deallocate user pages to bring the process size from oldsz to
