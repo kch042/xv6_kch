@@ -66,14 +66,12 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if (_scause == 13 || _scause == 15) {
-    // page fault handler: lazy allocation
-    if (uvmlazyalloc(p->pagetable, r_stval()) < 0) {
-        p->killed = 1;
-        printf("usertrap(): lazy alloc");
-    }
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (_scause == 13 || _scause == 15) {
+    // page fault handler
+    if (uvmlazyalloc(p->pagetable, r_stval()) < 0)
+        p->killed = 1;
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

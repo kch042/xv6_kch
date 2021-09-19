@@ -5,6 +5,9 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+
 
 /*
  * the kernel's page table.
@@ -91,6 +94,8 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
+// Used to translate user va in kernel mode (e.g. user pointer passed to syscall)
+// since kernel and user mode uses different pagetable
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
@@ -101,10 +106,14 @@ walkaddr(pagetable_t pagetable, uint64 va)
     return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+  
+  // cannot translate or missing page, may be a page fault 
+  if(pte == 0 || (*pte & PTE_V) == 0) {
+    if (uvmlazyalloc(pagetable, va) < 0)
+        return 0;
+    pte = walk(pagetable, va, 0);
+  }
+
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -181,7 +190,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue;
+      // panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
       continue;
       // panic("uvmunmap: not mapped");
@@ -253,19 +263,30 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 }
 
 // page fault handler
-uint64
+// check if user va is below sp or above allocated range
+// if ok, allocated a phys page for that va
+// allocate a page for the faulted address
+// return 0 if suc, -1 if failed
+int
 uvmlazyalloc(pagetable_t pgtbl, uint64 va) {
+    // check if under stack (in guard page) or above allocated range
+    struct proc *p = myproc();
+    if (va >= p->sz || va < p->trapframe->sp)
+        return -1;
+    
+    // Allocate a page
+    // return -1 if out of memory
     char *mem = kalloc();
     if (mem == 0)
-        return 0;
+        return -1;
     memset(mem, 0, PGSIZE);
 
     va = PGROUNDDOWN(va);
     if (mappages(pgtbl, va, PGSIZE, (uint64)mem, PTE_R | PTE_W | PTE_U | PTE_X) < 0) {
         kfree(mem);
-        return 0;
+        return -1;
     }
-    return (uint64)mem;
+    return 0;
 }
 
 // Deallocate user pages to bring the process size from oldsz to
@@ -332,9 +353,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue;
+      // panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
+      // panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
