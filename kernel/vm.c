@@ -311,7 +311,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -319,20 +318,62 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    
+    // mark COW page if it is writable
+    if (*pte & PTE_W)
+        *pte = (*pte | PTE_COW) & (~PTE_W);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    
+    if(mappages(new, i, PGSIZE, pa, flags) != 0)
       goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
-    }
+    
+    // increment ref count to that physical page
+    rc_grow(pa, 1);
   }
   return 0;
 
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+}
+
+int
+uvmcowalloc(pagetable_t pagetable, uint64 va) {
+    if (va >= MAXVA)
+        // panic("MAXVA");
+        return -1;
+
+    pte_t *pte = walk(pagetable, va, 0);
+    if (pte == 0)
+        // panic("pte zero");
+        return -1;
+
+    if (*pte & PTE_COW) {
+        if (*pte & PTE_W)
+            panic("uvmcowalloc(): both PTE_COW and PTE_W");
+        
+        // if more than one processes reference to the page
+        // allocate a new page to it
+        if (!rc_onlyone(PTE2PA(*pte))) {
+            char *mem = kalloc();
+            if (mem == 0)
+              // panic("out of mem");
+              return -1;
+            
+            // copy from the COW page to the new page
+            memmove(mem, (void*)PTE2PA(*pte), PGSIZE);
+
+            // decrement the ref count to the COW page
+            kfree((void *) PTE2PA(*pte));
+            
+            // update pa
+            *pte = PA2PTE((uint64)mem) | PTE_FLAGS(*pte);
+        }
+
+        // update pte flags
+        *pte = (*pte | PTE_W) & (~PTE_COW);
+    }
+    return 0;
 }
 
 // mark a PTE invalid for user access.
@@ -358,6 +399,12 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    
+    // if the page to be written is COW,
+    // allocate a new page and copy the content to it
+    if (uvmcowalloc(pagetable, va0) < 0)
+        return -1;
+    
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
