@@ -31,6 +31,23 @@ barrier()
   // then increment bstate.round.
   //
   
+  pthread_mutex_lock(&bstate.barrier_mutex);
+  
+  // last one come in
+  if (++bstate.nthread == nthread) {
+    bstate.round++;
+    bstate.nthread = 0;
+    pthread_mutex_unlock(&bstate.barrier_mutex);
+    pthread_cond_broadcast(&bstate.barrier_cond);
+  } else {
+    // some threads has not reached barrier yet, wait
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+    
+    // need to release the lock since the first thread awaken
+    // will reacquire the lock, and the other awaken threads will be
+    // spinning waiting for the lock
+    pthread_mutex_unlock(&bstate.barrier_mutex);
+  }
 }
 
 static void *

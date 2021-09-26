@@ -1,0 +1,13 @@
+When two threads hashe keys to the same entry
+
+say the i-th entry
+
+Then they both got the head of table[i]
+
+and create new entries respectively
+
+Now the new entries both point to the original head of table[i]
+
+But then when updating the head of table[i]
+
+We would lost the new entry which is the one updated first
