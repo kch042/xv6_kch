@@ -369,14 +369,21 @@ iunlockput(struct inode *ip)
 //
 // The content (data) associated with each inode is stored
 // in blocks on the disk. The first NDIRECT block numbers
-// are listed in ip->addrs[].  The next NINDIRECT blocks are
+// are listed in ip->addrs[0...NDIRECT-1].  The next NINDIRECT blocks are
 // listed in block ip->addrs[NDIRECT].
-
+//
+// The next NINDIRECT*NINDIRECT blocks are associated w/ ip->addr[NDIRECT+1]
+// which leads to a indirect block. 
+// This indirect block then leads to NINDIRECT indirect blocks, 
+// each of which contains block addr of NINDIRECT data blocks. 
+//
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
 static uint
 bmap(struct inode *ip, uint bn)
 {
+  // bn: logical block addr (i.e. n-th block)
+  // addr: physical block addr
   uint addr, *a;
   struct buf *bp;
 
@@ -387,12 +394,13 @@ bmap(struct inode *ip, uint bn)
   }
   bn -= NDIRECT;
 
+  // Singly indirect block
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0)
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
     bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
+    a = (uint*)bp->data;  // take the block as an array of block no. (uint[])
     if((addr = a[bn]) == 0){
       a[bn] = addr = balloc(ip->dev);
       log_write(bp);
@@ -400,7 +408,46 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
 
+  // Doubly indirect block
+  // NINDIRECT*NINDIRECT leaves (data blocks)
+  if (bn < NINDIRECT*NINDIRECT) {
+
+    if ((addr = ip->addrs[NDIRECT+1]) == 0)
+        ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
+        
+    // Suppose we have 2-level indirection
+    // Then at this point, bn = x * NINDIRECT + y, where y< NINDIRECT
+    // we need to get next indir block by reading the x-th entry from current indir block
+    // When we reach the next indir block, bn = y
+    int factor, x;
+    int level = 2;  // 2-level of indirect blocks
+    while (level--) {
+        // Get current indir block
+        bp = bread(ip->dev, addr);
+        a = (uint*)bp->data;           
+        
+        // Calculate x 
+        factor = 1;
+        for (int j = 0; j < level-1; j++)
+            factor *= NINDIRECT;
+        x = bn/factor;
+
+        // Get addr of next block, allocate one if not yet existing
+        if ((addr = a[x]) == 0) {
+            a[x] = addr = balloc(ip->dev);
+            log_write(bp);
+        }
+
+        bn %= factor;
+        brelse(bp);
+    }
+
+    return addr;
+  
+  }
+  
   panic("bmap: out of range");
 }
 
@@ -430,6 +477,29 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+  
+  if (ip->addrs[NDIRECT+1]) {
+      struct buf *cp;
+      uint *aa;
+
+      bp = bread(ip->dev, ip->addrs[NDIRECT]);
+      a = (uint*) bp->data;
+      for (i = 0; i < NINDIRECT; i++) {
+          if (a[i]) {
+              cp = bread(ip->dev, a[i]);
+              aa = (uint*) cp->data;
+              for (j = 0; j < NINDIRECT; j++) {
+                  if (aa[j])
+                      bfree(ip->dev, aa[j]);
+              }
+              brelse(cp);
+              bfree(ip->dev, a[i]);
+          }
+      }
+      brelse(bp);
+      bfree(ip->dev, ip->addrs[NDIRECT+1]);
+      ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;

@@ -33,13 +33,13 @@
 // Contents of the header block, used for both the on-disk header block
 // and to keep track in memory of logged block# before commit.
 struct logheader {
-  int n;
-  int block[LOGSIZE];
+  int n;  // How many modified blocks
+  int block[LOGSIZE];  // the modified block no. of in-mem buf 
 };
 
 struct log {
   struct spinlock lock;
-  int start;
+  int start;       // starting block no.
   int size;
   int outstanding; // how many FS sys calls are executing.
   int committing;  // in commit(), please wait.
@@ -66,7 +66,7 @@ initlog(int dev, struct superblock *sb)
 
 // Copy committed blocks from log to their home location
 static void
-install_trans(int recovering)
+install_trans(int recovering)  // install transaction
 {
   int tail;
 
@@ -102,9 +102,15 @@ read_head(void)
 static void
 write_head(void)
 {
+  // Get the first log block
   struct buf *buf = bread(log.dev, log.start);
+
+  // Recall the first block in log is for log header (hb == header block)
   struct logheader *hb = (struct logheader *) (buf->data);
   int i;
+
+  // Write back the in-mem log header back to on-disk log header
+  // If log.lh.n == 0, then the transaction is removed 
   hb->n = log.lh.n;
   for (i = 0; i < log.lh.n; i++) {
     hb->block[i] = log.lh.block[i];
@@ -175,6 +181,16 @@ end_op(void)
 }
 
 // Copy modified blocks from cache to log.
+// KCH comment:
+//   used only in commit()
+//   Suppose some process modifies some blocks (cache buffers, actually)
+//   The goal here is to copy from the modified block bufs to the in-mem log block bufs
+//   then calls bwrite() to write back to on-disk log blocks
+//   The block field in log header (log.lh.block) records
+//   the modified block no. (or sector no.)
+//   The "to" buf starts from log.start + 0 + 1
+//   since log.start is the header block
+//   The subsequent blocks are for log blocks
 static void
 write_log(void)
 {
@@ -226,6 +242,8 @@ log_write(struct buf *b)
     if (log.lh.block[i] == b->blockno)   // log absorbtion
       break;
   }
+
+  // Record the block no. of the modified block into log header
   log.lh.block[i] = b->blockno;
   if (i == log.lh.n) {  // Add new block to log?
     bpin(b);
