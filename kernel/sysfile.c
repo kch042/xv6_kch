@@ -115,6 +115,7 @@ sys_fstat(void)
   return filestat(f, st);
 }
 
+
 // Create the path new as a link to the same inode as old.
 uint64
 sys_link(void)
@@ -214,10 +215,13 @@ sys_unlink(void)
     iunlockput(ip);
     goto bad;
   }
-
+  
+  // clear the dir entry
   memset(&de, 0, sizeof(de));
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
     panic("unlink: writei");
+
+  // if ip is a dir, then it has "." linking to dp
   if(ip->type == T_DIR){
     dp->nlink--;
     iupdate(dp);
@@ -283,6 +287,67 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+
+// Soft link syscall.
+// e.g. ln -s boo/a foo/b
+// will create a new inode under "./foo", whose data blocks holds the path "boo/a"
+// The dir should look like this:
+// -.
+//  |--foo
+//      |--b
+//      |--boo
+//         |--a
+
+uint64
+sys_symlink(void) {  
+    char path[MAXPATH], new[MAXPATH], name[DIRSIZ];
+    struct inode *ip, *dp;
+
+    if (argstr(0, path, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
+        return -1;
+    
+    begin_op();
+    
+    // Get the dir inode that the new inode is supposed to link to
+    if ((dp = nameiparent(new, name)) == 0) {
+        end_op();
+        return -1;
+    }
+    
+    // Does the inode with the name already exist ?
+    ilock(dp);
+    if ((ip = dirlookup(dp, name, 0)) != 0) {
+        iunlockput(dp);
+        iput(ip);
+        end_op();
+        return 0;
+    }
+    
+    if ((ip = ialloc(dp->dev, T_SYMLINK)) == 0)
+        panic("symlink: ialloc");
+
+    ilock(ip);
+    ip->nlink = 1;
+    if (writei(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH)
+        goto bad;
+    
+    // Link the new inode to the dp
+    if (dirlink(dp, name, ip->inum) < 0)
+        goto bad;
+    
+    iunlockput(ip);
+    iunlockput(dp);
+    end_op();
+    return 0;
+
+bad:
+    iunlockput(ip);
+    iunlockput(dp);
+    end_op();
+    return -1;
+}
+
+
 uint64
 sys_open(void)
 {
@@ -294,9 +359,11 @@ sys_open(void)
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
-
+  
+  // Begin an transaction since iput() may modify the disk inode
   begin_op();
-
+  
+  // obtain and lock the inode
   if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
@@ -308,6 +375,35 @@ sys_open(void)
       end_op();
       return -1;
     }
+
+    // symlink
+    // need to follow the path the inode provides to get the underneath inode
+    // if O_NOFOLLOW, inode = path inode
+    if (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+        int j = 10;
+        char path[MAXPATH];
+        while (j-- && ip->type == T_SYMLINK) {
+            // read the path from symlink inode
+            ilock(ip);
+            if (readi(ip, 0, (uint64)path, 0, MAXPATH) == 0) {
+                end_op();
+                return -1;
+            }
+            iunlockput(ip);
+            
+            // parse the path and get the inode
+            if ((ip = namei(path)) == 0) {
+                end_op();
+                return -1;
+            }
+        }
+
+        if (ip->type == T_SYMLINK) {
+            end_op();
+            return -1;
+        }
+    }
+
     ilock(ip);
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
@@ -321,6 +417,7 @@ sys_open(void)
     end_op();
     return -1;
   }
+
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)

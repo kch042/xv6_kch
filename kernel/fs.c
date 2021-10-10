@@ -412,40 +412,34 @@ bmap(struct inode *ip, uint bn)
 
   // Doubly indirect block
   // NINDIRECT*NINDIRECT leaves (data blocks)
+  // bn = x * NINDIRECT + y, where 0 <= x, y < NINDIRECT
   if (bn < NINDIRECT*NINDIRECT) {
-
     if ((addr = ip->addrs[NDIRECT+1]) == 0)
         ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
-        
-    // Suppose we have 2-level indirection
-    // Then at this point, bn = x * NINDIRECT + y, where y< NINDIRECT
-    // we need to get next indir block by reading the x-th entry from current indir block
-    // When we reach the next indir block, bn = y
-    int factor, x;
-    int level = 2;  // 2-level of indirect blocks
-    while (level--) {
-        // Get current indir block
-        bp = bread(ip->dev, addr);
-        a = (uint*)bp->data;           
-        
-        // Calculate x 
-        factor = 1;
-        for (int j = 0; j < level-1; j++)
-            factor *= NINDIRECT;
-        x = bn/factor;
+    bp = bread(ip->dev, addr);
+    a = (uint*) bp->data;
+    
+    int x, y;
+    x = bn / NINDIRECT;
+    y = bn % NINDIRECT;
 
-        // Get addr of next block, allocate one if not yet existing
-        if ((addr = a[x]) == 0) {
-            a[x] = addr = balloc(ip->dev);
-            log_write(bp);
-        }
-
-        bn %= factor;
-        brelse(bp);
+    // Look up the first level indir table
+    if ((addr = a[x]) == 0) {
+        addr = a[x] = balloc(ip->dev);
+        log_write(bp);
     }
-
+    brelse(bp);
+   
+    // Obtain and look up the second level indir table
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if ((addr = a[y]) == 0) {
+        addr = a[y] = balloc(ip->dev);
+        log_write(bp);
+    }
+    brelse(bp);
+      
     return addr;
-  
   }
   
   panic("bmap: out of range");
