@@ -10,6 +10,7 @@
 #include "param.h"
 #include "stat.h"
 #include "spinlock.h"
+#include "mmap.h"
 #include "proc.h"
 #include "fs.h"
 #include "sleeplock.h"
@@ -50,6 +51,32 @@ fdalloc(struct file *f)
     }
   }
   return -1;
+}
+
+uint64
+sys_mmap(void) {
+    struct file *f;
+    int len, prot, flags, off;
+    
+    // Assume the addr is determined by the kernel
+    if (argfd(4, 0, &f) < 0 || argint(1, &len) < 0|| argint(2, &prot) < 0 || 
+            argint(3, &flags) < 0 || argint(5, &off) < 0)
+        return -1;
+    
+    uint64 addr = mmap(0, len, prot, flags, f, off);
+    
+    return addr ? addr: -1;
+}
+
+uint64
+sys_munmap(void) {
+    uint64 va;
+    int len;
+    
+    if (argaddr(0, &va) < 0 || argint(1, &len))
+        return -1;
+
+    return munmap(va, len);
 }
 
 uint64

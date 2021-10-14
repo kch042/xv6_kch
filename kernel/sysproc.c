@@ -5,6 +5,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
+#include "mmap.h"
 #include "proc.h"
 
 uint64
@@ -95,3 +96,4 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+

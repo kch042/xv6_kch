@@ -3,6 +3,7 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "mmap.h"
 #include "proc.h"
 #include "defs.h"
 
@@ -47,6 +48,7 @@ procinit(void)
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
+      initmm(p);
       p->kstack = KSTACK((int) (p - proc));
   }
 }
@@ -281,6 +283,11 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+    
+  // Copy the vma
+  // Increment ref count of the file mmapped to
+  memmove(&np->mm, &p->mm, sizeof(struct mm));
+  
 
   np->parent = p;
 
@@ -352,6 +359,11 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
+
+  // Unmap all mmaped area
+  struct vma *v = p->mm.head.next;
+  while (v) 
+      munmap(v->start, v->end - v->start + 1);
 
   begin_op();
   iput(p->cwd);
