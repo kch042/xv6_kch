@@ -286,7 +286,7 @@ fork(void)
     
   // Copy the vma
   // Increment ref count of the file mmapped to
-  memmove(&np->mm, &p->mm, sizeof(struct mm));
+  //memmove(&np->mm, &p->mm, sizeof(struct mm));
   
 
   np->parent = p;
@@ -360,10 +360,12 @@ exit(int status)
     }
   }
 
+  /*
   // Unmap all mmaped area
   struct vma *v = p->mm.head.next;
   while (v) 
       munmap(v->start, v->end - v->start + 1);
+  */
 
   begin_op();
   iput(p->cwd);
