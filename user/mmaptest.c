@@ -194,6 +194,10 @@ mmap_test(void)
 
   printf("test mmap dirty: OK\n");
 
+  //
+  // cause fork test fail ?
+  // 
+
   printf("test not-mapped unmap\n");
   
   // unmap the rest of the mapped memory.
@@ -201,9 +205,9 @@ mmap_test(void)
     err("munmap (4)");
 
   printf("test not-mapped unmap: OK\n");
-    
+
   printf("test mmap two files\n");
-  
+
   //
   // mmap two files at the same time.
   //
@@ -240,8 +244,26 @@ mmap_test(void)
   munmap(p2, PGSIZE);
   
   printf("test mmap two files: OK\n");
-  
+
   printf("mmap_test: ALL OK\n");
+/*
+  // My test
+  int fd3;
+  fd3 = open("myfile", O_RDWR | O_CREATE);
+  char *p3 = mmap(0, PGSIZE, PROT_WRITE | PROT_READ, MAP_SHARED, fd3, 0);
+  char *p4 = mmap(0, PGSIZE, PROT_WRITE | PROT_READ, MAP_SHARED, fd3, 0);
+  
+  p3[0] = 'X';
+  p4[0] = 'Y';
+
+  printf("mytest: \np3: %p\np4:%p\n", p3, p4);
+  if (p3[0] != p4[0])
+      printf("mytest: p3[0]: %x", p3[0]);
+  else
+      printf("mytest: ok\n");
+  close(fd3);
+  unlink("myfile");
+*/
 }
 
 //
@@ -269,14 +291,18 @@ fork_test(void)
   char *p2 = mmap(0, PGSIZE*2, PROT_READ, MAP_SHARED, fd, 0);
   if (p2 == MAP_FAILED)
     err("mmap (5)");
+  
+  //printf("p1: %p\np2: %p", p1, p2);  
 
   // read just 2nd page.
   if(*(p1+PGSIZE) != 'A')
     err("fork mismatch (1)");
 
+
   if((pid = fork()) < 0)
     err("fork");
   if (pid == 0) {
+    //printf("child _v1 begins:\n");
     _v1(p1);
     munmap(p1, PGSIZE); // just the first page
     exit(0); // tell the parent that the mapping looks OK.
@@ -289,7 +315,8 @@ fork_test(void)
     printf("fork_test failed\n");
     exit(1);
   }
-
+  
+  printf("child done\n");
   // check that the parent's mappings are still there.
   _v1(p1);
   _v1(p2);

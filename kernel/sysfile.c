@@ -76,8 +76,7 @@ sys_munmap(void) {
     if (argaddr(0, &va) < 0 || argint(1, &len))
         return -1;
     
-    return -1;
-    //return munmap(va, len);
+    return munmap(va, len);
 }
 
 uint64

@@ -14,7 +14,7 @@ struct file {
 #define	mkdev(m,n)  ((uint)((m)<<16| (n)))
 
 #define MAXFSIZE (MAXFILE * BSIZE)
-#define MAXFPAGE ((MAXFSIZE << 12) + 1)  /* MAX NUMBER OF PAGES PER FILE */
+#define MAXFPAGE ((MAXFSIZE >> 12) + 1)  /* MAX NUMBER OF PAGES PER FILE */
 
 // in-memory copy of an inode
 struct inode {
@@ -23,11 +23,12 @@ struct inode {
   int ref;            // Reference count
   struct sleeplock lock; // protects everything below here
   int valid;          // inode has been read from disk?
+  
+  // number of shared mappings to this inode
+  // if nshare == 0, shared physical pages allocated to mmap() must be freed
+  uint nshare; 
 
-  // num of shared mappings (no matter from the same process or not)
-  uint nshare;
-
-  // mapped physical address (MAP_SHARED only)
+  // mapped physical address (for MAP_SHARED only)
   // indexed by file offset (in unit of page)
   // should be freed if nsharedmap == 0
   uint64 mpa[MAXFPAGE];

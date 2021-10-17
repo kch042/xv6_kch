@@ -40,6 +40,7 @@ int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);
 struct inode*   ialloc(uint, short);
 struct inode*   idup(struct inode*);
+struct inode*   mdup(struct inode*, int);
 void            iinit();
 void            ilock(struct inode*);
 void            iput(struct inode*);
@@ -71,6 +72,7 @@ void            begin_op(void);
 void            end_op(void);
 
 // mmap.c
+void            printHead();
 void            initmm(struct proc*);
 uint64          mmap(uint64, uint, int, int, struct file*, uint);
 int             mmaphandler(uint64);

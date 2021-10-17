@@ -24,8 +24,8 @@
 //   Else, allocate a page and read the file page from disk, then map.
 
 
-// Debugging
-// Log the free list and allocated list
+// Debugging.
+// Log the free list and allocated list.
 void printHead() {
     struct proc *p = myproc();
     struct vma *v;
@@ -52,6 +52,7 @@ initmm(struct proc *p) {
     
     p->mm.head.start = VMABASE;
     p->mm.head.end = VMABASE;
+    p->mm.head.next = 0;
 
     // Create linked list of freevma
     for (v = p->mm._vma; v < p->mm._vma + NVMA; v++) {
@@ -63,7 +64,7 @@ initmm(struct proc *p) {
 // Simple implementation mmap
 // 
 // Check the protection bits and perm
-// Allocate page-aligned virtual addr (but not phys addr until page fault occurs),
+// Allocate page-aligned virtual addr (but not phys addr until write occurs),
 // which starts from VMABASE = (MAXVA >> 1)
 uint64
 mmap(uint64 addr, uint len, int prot, int flags, struct file *f, uint off) {
@@ -81,18 +82,15 @@ mmap(uint64 addr, uint len, int prot, int flags, struct file *f, uint off) {
             return -1;
         pte_flags |= PTE_R;
     }
-
-    if (flags & MAP_SHARED) {
-        ilock(f->ip);
-        f->ip->nshare++;
-        iunlock(f->ip);
-    }
    
     // Find an free vma
     struct proc *p = myproc();
     struct vma *v = p->mm.freeHead.next;
-    if (v == 0)
+    if (v == 0) {
+        printHead();
         panic("mmap: out of vma");
+    }
+        
     p->mm.freeHead.next = v->next;
     v->next = 0;
 
@@ -113,10 +111,11 @@ mmap(uint64 addr, uint len, int prot, int flags, struct file *f, uint off) {
     v->flags = flags;
     v->prot = prot;
     v->perm = pte_flags;
+    v->npages = 0;
 
-    v->file = f;
+    v->ip = f->ip;
     v->off = off;
-    filedup(f);
+    mdup(v->ip, v->flags & MAP_SHARED);  
     
     //printHead();
 
@@ -125,43 +124,52 @@ mmap(uint64 addr, uint len, int prot, int flags, struct file *f, uint off) {
 
 
 // get the physical page for faulted mmap va
-// If shared mapping, look up the inode to see if cached
+// If shared mapping, look up the inode to see if the page is cached
 uint64 getmpa(struct vma *v, uint64 va) {
     // compute the file offset the va mapped to
     uint off = (v->off + va - v->start);
     uint64 pa = 0;
-    struct inode *ip = v->file->ip;
+    struct inode *ip = v->ip;
     
     ilock(ip);
+    
+    // the va should not exceeds file size
+    if (PGROUNDDOWN(v->off + va - v->start) > PGROUNDDOWN(ip->size))
+        return 0;
+
     if (v->flags & MAP_SHARED)
         pa = ip->mpa[off/PGSIZE];
     if (pa != 0) {
-        v->npages++;
         iunlock(ip);
         return pa;    /* shared page cached */
     }
-        
+    
+    // not cached or MAP_PRIVATE
+    // Allocate a new page.
     pa = (uint64) kalloc();
     if (pa == 0)  panic("getmpa(): kalloc() out of pa");
     memset((char*)pa, 0, PGSIZE);
-    v->npages++;
 
     readi(ip, 0, pa, off, PGSIZE);
 
     if (v->flags & MAP_SHARED)
-        ip->mpa[off] = pa;
+        ip->mpa[off/PGSIZE] = pa;
     
     iunlock(ip);
     return pa;
 }
 
-// mmap maps the file lazily
-// so the actual physical page is allocated and mapped
-// when the process needs that page
+// Handleds mmap page fault.
+// (mmap is copy-on-write)
+// Allocate and add pte to the pagetable
+// when process needs it.
 int
 mmaphandler(uint64 va) {
-    //printf("handler begins\n");
-    
+    //printf("handler begins: faulted va: %p\n", va);
+ 
+    // the va should be page-aligned to work well
+    va = PGROUNDDOWN(va);
+
     uint64 pa;    
     struct proc *p = myproc();
     struct vma *v = p->mm.head.next;
@@ -173,71 +181,172 @@ mmaphandler(uint64 va) {
         v = v->next;
     }
     if (v == 0) return -1;
-    
-    pa = getmpa(v, va);
 
+    pa = getmpa(v, va);
+    if (pa == 0)
+        return -1;
+    
     // map the va to the allocated page
     if (mappages(p->pagetable, va, PGSIZE, pa, v->perm) < 0)
         panic("mmaphandler: mappages");
-   
+    v->npages++;
+    
     return 0;
 }
-/*
-// unmap the pages 
-// va should be page-aligned
+
+// Unmap and free the mmaped pages. 
+// va should be page-aligned.
 void
-_unmap(struct vma *v, uint64 va, uint len, int do_free) {
+_unmap(struct vma *v, uint64 va, uint len) {
     struct proc *p = myproc();
     uint64 cur_va = va;
     uint64 pa;
-
+    
     // unmap one page one time
     while (v->npages > 0 && cur_va < va + len) {
         pa = walkaddr(p->pagetable, cur_va);
-        if (pa == 0)  continue;    // mapped but not allocated, skip 
-
-        uvmunmap(p->pagetable, cur_va, 1, do_free);
         
+        // skip if no pa allocated for this va
+        if (pa > 0)  {
+            uvmunmap(p->pagetable, cur_va, 1, 1);
+            v->npages--; 
+        }
+
         cur_va += PGSIZE;
-        v->npages--;
     }
 }
 
 
-// unmap, free and write back the pages to the underlying file
-// if only one process map to the file.
-// else just unmap the page
+// Unmap and write back the mmaped pages to the underlying file.
+// The mmap pages are not freed.
+//
 // va should be page-aligned
+// The vma should be MAP_SHARED
 void
 _unmap_writeback(struct vma *v, uint64 va, uint len) {
     struct proc *p = myproc();
     uint64 cur_va = va;
-    uint64 pa; 
+    uint64 pa;
 
     begin_op();
-    ilock(v->file->ip);
-
+    ilock(v->ip);
+    
     // write back and unmap one page one time
     while (v->npages > 0 && cur_va < va + len) {
         pa = walkaddr(p->pagetable, cur_va);
-        if (pa == 0)
-            continue;  // mapped but not allocated, skip 
-            
-        if (writei(v->file->ip, 0, pa, v->off + cur_va - v->start, PGSIZE) < PGSIZE)
-            panic("munmap: write back error");
-
-        uvmunmap(p->pagetable, cur_va, 1, 1);
         
+        // unmap and write back
+        if (pa > 0) {
+            if (writei(v->ip, 0, pa, v->off + cur_va - v->start, PGSIZE) < PGSIZE)
+                panic("munmap: write back error");
+            
+            uvmunmap(p->pagetable, cur_va, 1, 0);
+            v->npages--;
+        } 
+
         cur_va += PGSIZE;
-        v->npages--;
     }
-    
-    iunlock(v->file->ip);
+   
+    iunlock(v->ip);
     end_op();   
 }
 
 
+// Free all cached file pages (i.e. mmaped pages).
+// Caller must hold ip->lock
+void
+mfree(struct inode *ip) {
+    uint off = 0;
+    uint64 pa = 0;
 
+    while (off < ip->size) {
+        pa = ip->mpa[off/PGSIZE];
+        if (pa != 0) 
+            kfree((void*)pa);
+        
+        ip->mpa[off/PGSIZE] = 0;
+        off += PGSIZE;   
+    }
+    
+    //memset(ip->mpa, 0, sizeof(ip->mpa));  // clear the mpa table
+}
+
+uint64
+munmap(uint64 va, uint len) {
+    struct proc *p = myproc();
+    struct vma *v = p->mm.head.next;
+    struct inode *ip;
+
+    // unmapped va must be page aligned
+    if (va % PGSIZE != 0)
+        panic("munmap: va not aligned");
+
+    // Find the vma that the va belongs to
+    while (v) {
+        if (va >= v->start && va < v->end)
+            break;
+        v = v->next;
+    }
+    if (v == 0)     // va not mapped 
+        return 0;    
+    
+    // Update the vma start, end and off
+    if (va == v->start) {
+        v->start += len;
+        v->off += len;
+    }
+    if (va + len >= v->end) {
+        len = v->end - va;   // do not unmap out of range 
+        v->end = va;
+    }
+    
+    // Unmap the specified pages.
+    // Write back to the backing file if MAP_SHARED
+    // Free the pages if MAP_PRIVATE
+    if (v->flags & MAP_SHARED)
+        _unmap_writeback(v, va, len);
+    else
+        _unmap(v, va, len);
+    
+    // mmap area all unmapped
+    // Free all mapped pages if shared and no more process has shared mapping to it
+    // close the file and free the vma
+    if (v->start >= v->end) {
+        // make sure all mmap pte are cleared and MAP_PRIVATE pages are freed
+        if (v->npages > 0) {
+            printHead();
+            printf("v->npages: %d\n", v->npages);
+            panic("munmap: still has page not unmapped");
+        }
+        
+        // Free the shared mmap pages
+        if (v->flags & MAP_SHARED) {
+            ip = v->ip;
+            ilock(ip);
+            if (--ip->nshare == 0)
+                mfree(ip);
+            //printf("ip->nshare: %d\n", ip->nshare);
+            iunlock(ip);
+        }
+        
+        // decrease the ref count
+        begin_op();
+        iput(v->ip);
+        end_op();
+
+        // free the vma
+        struct vma *pv = &p->mm.head;
+        while (pv->next != v)
+            pv = pv->next;
+        pv->next = v->next;
+        v->next = p->mm.freeHead.next;
+        p->mm.freeHead.next = v;
+    }
+
+    return 0;
+}
+
+/*
 void
 mwriteback(struct vma *v) {
     // Only shared mappings needs to be written back
@@ -256,7 +365,7 @@ mwriteback(struct vma *v) {
     }
 
     // No more process has mappings to this inode, 
-    // write back to the disk
+    // free all cached file page in the memory
     begin_op();
     for (off = 0; off < ip->size; off += PGSIZE) {
         pa = ip->mpa[off/PGSIZE];
@@ -268,61 +377,6 @@ mwriteback(struct vma *v) {
     }
     end_op();
 }
+*/
 
-uint64
-munmap(uint64 va, uint len) {
-    struct proc *p = myproc();
-    struct vma *v = p->mm.head.next;
-    int do_free;
-    
-    // unmapped va must be page aligned
-    if (va % PGSIZE != 0)
-        panic("munmap: va not aligned");
 
-    // Find the vma that the va belongs to
-    while (v) {
-        if (va >= v->start && va < v->end)
-            break;
-    }
-    if (v == 0)     // va not mapped 
-        return 0;    
-    
-    // Update the vma start, end and off
-    if (va == v->start) {
-        v->start += len;
-        v->off += len;
-    }
-    if (va + len >= v->end) {
-        len = v->end - va;   // do not unmap out of range 
-        v->end = va;
-    }
-
-    // Unmap the specified pages.
-    do_free = v->flags & MAP_PRIVATE;
-    _unmap(v, va, len, do_free);
-
-    // mmap area all unmapped
-    // Write back if shared and no more process has shared mapping to it
-    // close the file and free the vma
-    if (v->start >= v->end) {
-        if (v->npages > 0) {
-            printHead();
-            printf("v->npages: %d\n", v->npages);
-            panic("munmap: still has page not unmapped");
-        }
-        
-        fileclose(v->file);
-        
-        mwriteback(v);
-        
-        // free the vma
-        struct vma *pv = &p->mm.head;
-        while (pv->next != v)
-            pv = pv->next;
-        pv->next = v->next;
-        v->next = p->mm.freeHead.next;
-        p->mm.freeHead.next = v;
-    }
-
-    return 0;
-} */

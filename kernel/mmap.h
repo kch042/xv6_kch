@@ -5,14 +5,14 @@ struct vma {
 
     uint64 start;
     uint64 end;
-    uint npages; // number of allocated physical pages for this vma, which are in pagetable
+    uint npages; // how many valid mmap pte in the pagetable
     
     int perm;    // pte_flags
     int prot;    // mem protection (e.g. read/write perm)
     int flags;   // whether the mapped region is visible to other process
                  // and whether write back to the underlying file
     
-    struct file *file;
+    struct inode *ip;
     uint off;    // offset of the file mapped to
 };
 
@@ -23,8 +23,8 @@ struct mm {
     struct vma _vma[NVMA];
     
     // Linked list. (Dummy head)
-    struct vma head;       /* allocated vma */
-    struct vma freeHead;   /* free vma */
+    struct vma head;       /* allocated vma list */
+    struct vma freeHead;   /* free vma list */
 };
 
 

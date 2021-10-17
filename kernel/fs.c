@@ -284,6 +284,20 @@ idup(struct inode *ip)
   return ip;
 }
 
+// Increase ref count to the inode
+// and nshare if MAP_SHARED
+struct inode*
+mdup(struct inode *ip, int shared) {
+    acquire(&icache.lock);
+    
+    if (shared) 
+        ip->nshare++;    
+    ip->ref++;
+
+    release(&icache.lock);
+    return ip;
+}
+
 // Lock the given inode.
 // Reads the inode from disk if necessary.
 void

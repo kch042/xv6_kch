@@ -3,6 +3,7 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "fcntl.h"
 #include "mmap.h"
 #include "proc.h"
 #include "defs.h"
@@ -262,6 +263,29 @@ growproc(int n)
   return 0;
 }
 
+// Debugging
+// Log the free list and allocated list
+void printHead_np(struct proc *p) {
+    struct vma *v;
+    int free = 0, head = 0;
+    
+    v = &p->mm.freeHead;
+    while (v) {
+        free++;
+        v = v->next;
+    }
+
+    v = &p->mm.head;
+    while (v) {
+        head++;
+        v = v->next;
+    }
+    
+    printf("#head: %d\n#free: %d\n", head, free);
+}
+
+
+
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
@@ -283,12 +307,34 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-    
-  // Copy the vma
-  // Increment ref count of the file mmapped to
-  //memmove(&np->mm, &p->mm, sizeof(struct mm));
-  
+   
 
+  // Copy the vma metadata (allocation will be left to mmaphandler()).
+  // Increment ref count of the file mmapped to.
+  struct vma *v, *pv = p->mm.head.next;  // v: np's vma,  pv: p's vma
+  while (pv) {
+    // take one free vma from np
+    v = np->mm.freeHead.next;
+    np->mm.freeHead.next = v->next;
+    
+    // copy the vma info
+    v->start = pv->start;
+    v->end = pv->end;
+    v->npages = 0;
+    v->flags = pv->flags;
+    v->perm = pv->perm;
+    v->prot = pv->prot;
+   
+    v->ip = mdup(pv->ip, pv->flags & MAP_SHARED);
+    v->off = pv->off;
+    
+    // add the vma to the allocated list
+    v->next = np->mm.head.next;
+    np->mm.head.next = v;
+   
+    pv = pv->next;
+  }
+  
   np->parent = p;
 
   // copy saved user registers.
@@ -360,13 +406,17 @@ exit(int status)
     }
   }
 
-  /*
+  
   // Unmap all mmaped area
   struct vma *v = p->mm.head.next;
-  while (v) 
+  while (v) {
       munmap(v->start, v->end - v->start + 1);
-  */
-
+      
+      // should not assign v = v->next
+      // since v is moved to free list
+      v = p->mm.head.next;
+  }
+     
   begin_op();
   iput(p->cwd);
   end_op();

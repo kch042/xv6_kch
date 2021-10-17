@@ -2715,6 +2715,7 @@ run(void f(char *), char *s) {
   }
 }
 
+// Requires 25 mins to run on my PC...
 int
 main(int argc, char *argv[])
 {
